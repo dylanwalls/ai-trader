@@ -1,12 +1,22 @@
 
 from langchain_openai.chat_models import ChatOpenAI
+import os
+from dotenv import load_dotenv
 
 from agents.state import AgentState
 from tools.api import search_line_items, get_financial_metrics, get_insider_trades, get_market_cap, get_prices
 
 from datetime import datetime
 
-llm = ChatOpenAI(model="gpt-4o")
+load_dotenv('.env')
+
+# Ensure OpenAI API key is set
+import openai
+openai.api_key = os.getenv('OPENAI_API_KEY')
+
+# Initialize the ChatOpenAI model
+llm = ChatOpenAI(model="gpt-4")
+
 
 def market_data_agent(state: AgentState):
     """Responsible for gathering and preprocessing market data"""
@@ -46,6 +56,9 @@ def market_data_agent(state: AgentState):
         limit=5,
     )
 
+    # Log the structure of insider_trades
+    print(f"Processed insider trades: {insider_trades}")
+
     # Get the market cap
     market_cap = get_market_cap(
         ticker=data["ticker"],
@@ -53,11 +66,18 @@ def market_data_agent(state: AgentState):
 
     # Get the line_items
     financial_line_items = search_line_items(
-        ticker=data["ticker"], 
-        line_items=["free_cash_flow", "net_income", "depreciation_and_amortization", "capital_expenditure", "working_capital"],
+        ticker=data["ticker"],
+        line_items=[
+            "freeCashFlow",
+            "netIncome",
+            "depreciation",
+            "capitalExpenditures",
+            "changeInWorkingCapital"
+        ],
         period='ttm',
-        limit=2,
-    )
+        limit=2
+)
+
 
     return {
         "messages": messages,

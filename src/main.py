@@ -1,5 +1,7 @@
 from langchain_core.messages import HumanMessage
 from langgraph.graph import END, StateGraph
+from dotenv import load_dotenv
+import os
 
 from agents.fundamentals import fundamentals_agent
 from agents.market_data import market_data_agent
@@ -13,6 +15,11 @@ from agents.valuation import valuation_agent
 import argparse
 from datetime import datetime
 
+# Determine the path to the .env file
+dotenv_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+
+# Load environment variables from the .env file
+load_dotenv(dotenv_path)
 
 ##### Run the Hedge Fund #####
 def run_hedge_fund(ticker: str, start_date: str, end_date: str, portfolio: dict, show_reasoning: bool = False):

@@ -11,18 +11,40 @@ def valuation_agent(state: AgentState):
     previous_financial_line_item = data["financial_line_items"][1]
     market_cap = data["market_cap"]
 
+    # Log the current and previous financial line items
+    print("Current Financial Line Item:", current_financial_line_item)
+    print("Previous Financial Line Item:", previous_financial_line_item)
+
+    # Log metrics data to verify contents
+    print(f"Metrics data for {data['ticker']}: {metrics}")
+
     reasoning = {}
 
     # Calculate working capital change
-    working_capital_change = current_financial_line_item.get('working_capital', 0) - previous_financial_line_item.get('working_capital', 0)
-    
+    working_capital_change = (
+        current_financial_line_item.get('working_capital', 0) 
+        - previous_financial_line_item.get('working_capital', 0)
+    )
+
+    # Check or calculate earnings growth
+    if "earnings_growth" in metrics:
+        growth_rate = metrics["earnings_growth"]
+    else:
+        # Calculate earnings growth if possible
+        current_net_income = current_financial_line_item.get("net_income")
+        previous_net_income = previous_financial_line_item.get("net_income")
+        if current_net_income is not None and previous_net_income not in [None, 0]:
+            growth_rate = (current_net_income - previous_net_income) / previous_net_income
+        else:
+            growth_rate = 0  # Fallback if data is unavailable
+
     # Owner Earnings Valuation (Buffett Method)
     owner_earnings_value = calculate_owner_earnings_value(
         net_income=current_financial_line_item.get('net_income'),
         depreciation=current_financial_line_item.get('depreciation_and_amortization'),
         capex=current_financial_line_item.get('capital_expenditure'),
         working_capital_change=working_capital_change,
-        growth_rate=metrics["earnings_growth"],
+        growth_rate=growth_rate,
         required_return=0.15,
         margin_of_safety=0.25
     )
@@ -30,7 +52,7 @@ def valuation_agent(state: AgentState):
     # DCF Valuation
     dcf_value = calculate_intrinsic_value(
         free_cash_flow=current_financial_line_item.get('free_cash_flow'),
-        growth_rate=metrics["earnings_growth"],
+        growth_rate=growth_rate,
         discount_rate=0.10,
         terminal_growth_rate=0.03,
         num_years=5,
