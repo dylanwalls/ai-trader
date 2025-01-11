@@ -3,8 +3,50 @@ from typing import Dict, Any, List
 import pandas as pd
 import requests
 from dotenv import load_dotenv
+import hashlib
+import os
+import pickle
 
 load_dotenv('.env')
+
+CACHE_DIR = './cache'
+
+def cached_request(url: str, cache_key: str) -> dict:
+    """Fetch data from a URL with caching."""
+    if not os.path.exists(CACHE_DIR):
+        os.makedirs(CACHE_DIR)
+
+    # Use the hash of the cache_key to store unique cache files
+    hashed_key = hashlib.md5(cache_key.encode()).hexdigest()
+    cache_path = os.path.join(CACHE_DIR, f"{hashed_key}.pkl")
+
+    # Load from cache if available
+    if os.path.exists(cache_path):
+        with open(cache_path, 'rb') as f:
+            cached_data = pickle.load(f)
+            print(f"Cache hit for key: {cache_key}")
+            return cached_data
+
+    # Fetch data from the API
+    response = requests.get(url)
+    if response.status_code != 200:
+        raise Exception(f"Error fetching data: {response.status_code} - {response.text}")
+
+    data = response.json()
+
+    # Check for Alpha Vantage API limit message
+    if "Information" in data and "Our standard API rate limit" in data["Information"]:
+        print(f"Alpha Vantage API limit reached for {cache_key}. Returning None and caching it.")
+        with open(cache_path, 'wb') as f:
+            pickle.dump(None, f)  # Cache None to prevent repeated calls
+        return None
+
+    # Save the result to cache
+    with open(cache_path, 'wb') as f:
+        pickle.dump(data, f)
+
+    return data
+
 
 def get_financial_metrics(
     ticker: str,
@@ -12,23 +54,19 @@ def get_financial_metrics(
     period: str = 'ttm',
     limit: int = 1
 ) -> List[Dict[str, Any]]:
-    """Fetch financial metrics from the Alpha Vantage API."""
+    """Fetch financial metrics with caching."""
     api_key = os.environ.get("ALPHA_VANTAGE_KEY")
-    url = (
-        f"https://www.alphavantage.co/query?function=OVERVIEW&symbol={ticker}&apikey={api_key}"
-    )
-    response = requests.get(url)
-    if response.status_code != 200:
-        raise Exception(
-            f"Error fetching data: {response.status_code} - {response.text}"
-        )
-    data = response.json()
-    if not data:
-        raise ValueError("No financial metrics returned")
+    url = f"https://www.alphavantage.co/query?function=OVERVIEW&symbol={ticker}&apikey={api_key}"
+    cache_key = f"financial_metrics_{ticker}"
+    data = cached_request(url, cache_key)
 
-        # Log fetched data
-    print(f"Fetched financial_metrics data for {ticker}: {data}")
-    return [data]  # Wrap in a list to match expected format
+    if data is None:
+        print(f"API limit reached or no data for {cache_key}. Returning None for financial metrics.")
+        return [{"Error": "API limit reached or no data available"}]
+
+    return [data]
+
+
 
 def search_line_items(
     ticker: str,
@@ -36,91 +74,60 @@ def search_line_items(
     period: str = 'ttm',
     limit: int = 1
 ) -> List[Dict[str, Any]]:
-    """
-    Fetch cash flow statements and extract specific line items.
-    
-    Args:
-        ticker (str): Stock ticker symbol.
-        line_items (List[str]): List of financial line items to retrieve.
-        period (str): Period to fetch (e.g., 'ttm' or 'annualReports').
-        limit (int): Limit the number of records returned.
-
-    Returns:
-        List[Dict[str, Any]]: A list of dictionaries containing the requested line items.
-    """
+    """Fetch cash flow statements with caching."""
     api_key = os.getenv("ALPHA_VANTAGE_KEY")
-    url = (
-        f"https://www.alphavantage.co/query?function=CASH_FLOW&symbol={ticker}&apikey={api_key}"
-    )
-    response = requests.get(url)
-    if response.status_code != 200:
-        raise Exception(
-            f"Error fetching data: {response.status_code} - {response.text}"
-        )
-    data = response.json()
+    url = f"https://www.alphavantage.co/query?function=CASH_FLOW&symbol={ticker}&apikey={api_key}"
+    cache_key = f"cash_flow_{ticker}_{period}"
+    data = cached_request(url, cache_key)
 
-    # Debugging the response
-    # print(f"API Response for CASH_FLOW: {data}")
+    # If data is None, return default values
+    if data is None:
+        print(f"API limit reached or no data for {cache_key}. Returning None for all line items.")
+        return [{item: None for item in line_items}]
 
-    # Check if the necessary data exists
     reports = data.get("annualReports")
     if not reports:
-        raise ValueError("No annual cash flow reports returned")
+        print(f"No annual cash flow reports found for {ticker}. Returning None for all line items.")
+        return [{item: None for item in line_items}]
 
-    # Extract the requested line items
     extracted_data = []
     for report in reports[:limit]:
-        line_item_data = {}
-        for item in line_items:
-            line_item_data[item] = report.get(item, None)  # Use None if item not present
+        line_item_data = {item: report.get(item, None) for item in line_items}
         extracted_data.append(line_item_data)
 
     return extracted_data
-
 
 def get_insider_trades(
     ticker: str,
     end_date: str,
     limit: int = 5,
 ) -> List[Dict[str, Any]]:
-    """Fetch insider trades from Finnhub API."""
+    """Fetch insider trades with caching."""
     api_key = os.environ.get("FINNHUB_API_KEY")
-    # print(f'api_key: {api_key}')
-    url = (
-        f"https://finnhub.io/api/v1/stock/insider-transactions?symbol={ticker}&token={api_key}"
-    )
-    response = requests.get(url)
-    if response.status_code != 200:
-        raise Exception(
-            f"Error fetching data: {response.status_code} - {response.text}"
-        )
-    data = response.json()
+    url = f"https://finnhub.io/api/v1/stock/insider-transactions?symbol={ticker}&token={api_key}"
+    cache_key = f"insider_trades_{ticker}_{end_date}"
+    data = cached_request(url, cache_key)
+
     if "data" not in data:
         raise ValueError("No insider trades returned")
-    # Log fetched data
+
     print(f"Fetched insider trades data from Finnhub for {ticker}: {data}")
     return data["data"][:limit]
 
-def get_market_cap(
-    ticker: str,
-) -> List[Dict[str, Any]]:
-    """Fetch market cap from Alpha Vantage."""
+
+def get_market_cap(ticker: str) -> Any:
+    """Fetch market cap with caching."""
     api_key = os.environ.get("ALPHA_VANTAGE_KEY")
-    url = (
-        f"https://www.alphavantage.co/query?function=OVERVIEW&symbol={ticker}&apikey={api_key}"
-    )
-    response = requests.get(url)
-    if response.status_code != 200:
-        raise Exception(
-            f"Error fetching data: {response.status_code} - {response.text}"
-        )
-    data = response.json()
+    url = f"https://www.alphavantage.co/query?function=OVERVIEW&symbol={ticker}&apikey={api_key}"
+    cache_key = f"market_cap_{ticker}"
+    data = cached_request(url, cache_key)
+
     if not data:
         raise ValueError("No company facts returned")
 
-    # Log fetched data
     print(f"Fetched marketcap data from Alpha Vantage for {ticker}: {data}")
     return data.get("MarketCapitalization", None)
+
 
 def get_prices(
     ticker: str,

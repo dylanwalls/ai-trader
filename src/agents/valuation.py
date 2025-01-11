@@ -7,8 +7,9 @@ def valuation_agent(state: AgentState):
     show_reasoning = state["metadata"]["show_reasoning"]
     data = state["data"]
     metrics = data["financial_metrics"][0]
-    current_financial_line_item = data["financial_line_items"][0]
-    previous_financial_line_item = data["financial_line_items"][1]
+    financial_line_items = data.get("financial_line_items", [])
+    current_financial_line_item = financial_line_items[0] if len(financial_line_items) > 0 else {}
+    previous_financial_line_item = financial_line_items[1] if len(financial_line_items) > 1 else {}
     market_cap = data["market_cap"]
 
     # Log the current and previous financial line items
@@ -21,9 +22,9 @@ def valuation_agent(state: AgentState):
     reasoning = {}
 
     # Calculate working capital change
-    working_capital_change = (
-        current_financial_line_item.get('working_capital', 0) 
-        - previous_financial_line_item.get('working_capital', 0)
+    working_capital_change = calculate_working_capital_change(
+        current_financial_line_item.get('working_capital', 0),
+        previous_financial_line_item.get('working_capital', 0),
     )
 
     # Check or calculate earnings growth
@@ -31,18 +32,19 @@ def valuation_agent(state: AgentState):
         growth_rate = metrics["earnings_growth"]
     else:
         # Calculate earnings growth if possible
-        current_net_income = current_financial_line_item.get("net_income")
-        previous_net_income = previous_financial_line_item.get("net_income")
-        if current_net_income is not None and previous_net_income not in [None, 0]:
+        current_net_income = current_financial_line_item.get("net_income", 0)
+        previous_net_income = previous_financial_line_item.get("net_income", 0)
+        if current_net_income and previous_net_income:
             growth_rate = (current_net_income - previous_net_income) / previous_net_income
         else:
-            growth_rate = 0  # Fallback if data is unavailable
+            growth_rate = 0
+
 
     # Owner Earnings Valuation (Buffett Method)
     owner_earnings_value = calculate_owner_earnings_value(
-        net_income=current_financial_line_item.get('net_income'),
-        depreciation=current_financial_line_item.get('depreciation_and_amortization'),
-        capex=current_financial_line_item.get('capital_expenditure'),
+        net_income=current_financial_line_item.get('net_income', 0),
+        depreciation=current_financial_line_item.get('depreciation_and_amortization', 0),
+        capex=current_financial_line_item.get('capital_expenditure', 0),
         working_capital_change=working_capital_change,
         growth_rate=growth_rate,
         required_return=0.15,
@@ -51,7 +53,7 @@ def valuation_agent(state: AgentState):
     
     # DCF Valuation
     dcf_value = calculate_intrinsic_value(
-        free_cash_flow=current_financial_line_item.get('free_cash_flow'),
+        free_cash_flow=current_financial_line_item.get('free_cash_flow', 0),
         growth_rate=growth_rate,
         discount_rate=0.10,
         terminal_growth_rate=0.03,
@@ -59,26 +61,32 @@ def valuation_agent(state: AgentState):
     )
     
     # Calculate combined valuation gap (average of both methods)
-    dcf_gap = (dcf_value - market_cap) / market_cap
-    owner_earnings_gap = (owner_earnings_value - market_cap) / market_cap
-    valuation_gap = (dcf_gap + owner_earnings_gap) / 2
-
-    if valuation_gap > 0.15:  # More than 15% undervalued
-        signal = 'bullish'
-    elif valuation_gap < -0.15:  # More than 15% overvalued
-        signal = 'bearish'
+    if market_cap:
+        dcf_gap = (dcf_value - market_cap) / market_cap
+        owner_earnings_gap = (owner_earnings_value - market_cap) / market_cap
+        valuation_gap = (dcf_gap + owner_earnings_gap) / 2
     else:
-        signal = 'neutral'
+        print("Warning: Market cap data is missing. Valuation calculations defaulting to 0.")
+        dcf_gap = owner_earnings_gap = valuation_gap = 0
+
+
+    signal = (
+        'bullish' if valuation_gap > 0.15 else
+        'bearish' if valuation_gap < -0.15 else
+        'neutral'
+    )
+
 
     reasoning["dcf_analysis"] = {
         "signal": "bullish" if dcf_gap > 0.15 else "bearish" if dcf_gap < -0.15 else "neutral",
-        "details": f"Intrinsic Value: ${dcf_value:,.2f}, Market Cap: ${market_cap:,.2f}, Gap: {dcf_gap:.1%}"
+        "details": f"Intrinsic Value: ${dcf_value:,.2f}, Market Cap: {'N/A' if market_cap is None else f'${market_cap:,.2f}'}, Gap: {'N/A' if market_cap is None else f'{dcf_gap:.1%}'}"
     }
 
     reasoning["owner_earnings_analysis"] = {
         "signal": "bullish" if owner_earnings_gap > 0.15 else "bearish" if owner_earnings_gap < -0.15 else "neutral",
-        "details": f"Owner Earnings Value: ${owner_earnings_value:,.2f}, Market Cap: ${market_cap:,.2f}, Gap: {owner_earnings_gap:.1%}"
+        "details": f"Owner Earnings Value: ${owner_earnings_value:,.2f}, Market Cap: {'N/A' if market_cap is None else f'${market_cap:,.2f}'}, Gap: {'N/A' if market_cap is None else f'{owner_earnings_gap:.1%}'}"
     }
+
 
     message_content = {
         "signal": signal,
